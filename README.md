@@ -98,7 +98,15 @@ flowchart TD
 - n8n 工作流程截圖
 - Discord 通知畫面
 - iOS 捷徑操作畫面
-- 去除敏感資訊後的 n8n 工作流程範例
+
+### n8n 工作流程範例
+
+以下提供兩份去除敏感資訊的 n8n 工作流程 JSON，展示系統的主要流程設計：
+
+- [追蹤清單管理流程](examples/B-tracking-management-workflow.json)
+  - 負責新增、停止及重新啟用商品追蹤。
+- [價格與庫存監測流程](examples/A-price-stock-monitoring-workflow.json)
+  - 負責定期取得商品資訊、比對異動及發送通知。
 
 ## 專案範圍與說明
 
