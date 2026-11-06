@@ -1,0 +1,1298 @@
+{
+  "name": "追蹤清單的新增與維護",
+  "nodes": [
+    {
+      "parameters": {
+        "authentication": "basicAuth",
+        "formTitle": "新增追蹤",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "分享內容或網址（選填，e.g. 貼上 App 分享的整段文字）",
+              "fieldType": "textarea"
+            },
+            {
+              "fieldLabel": "貨號（6 位數，e.g. 486124）",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "顏色尺寸（每行一組，範例：38 64cm）",
+              "fieldType": "textarea",
+              "requiredField": true
+            }
+          ]
+        },
+        "options": {
+          "buttonLabel": "Submit",
+          "respondWithOptions": {
+            "values": {
+              "respondWith": "redirect",
+              "redirectUrl": "%%%"
+            }
+          },
+          "customCss": ":root {\n\t--font-family: 'Open Sans', sans-serif;\n\t--font-weight-normal: 400;\n\t--font-weight-bold: 600;\n\t--font-size-body: 12px;\n\t--font-size-label: 14px;\n\t--font-size-test-notice: 12px;\n\t--font-size-input: 14px;\n\t--font-size-header: 20px;\n\t--font-size-paragraph: 14px;\n\t--font-size-link: 12px;\n\t--font-size-error: 12px;\n\t--font-size-html-h1: 28px;\n\t--font-size-html-h2: 20px;\n\t--font-size-html-h3: 16px;\n\t--font-size-html-h4: 14px;\n\t--font-size-html-h5: 12px;\n\t--font-size-html-h6: 10px;\n\t--font-size-subheader: 14px;\n\n\t/* Colors */\n\t--color-background: #fbfcfe;\n\t--color-test-notice-text: #e6a23d;\n\t--color-test-notice-bg: #fefaf6;\n\t--color-test-notice-border: #f6dcb7;\n\t--color-card-bg: #ffffff;\n\t--color-card-border: #dbdfe7;\n\t--color-card-shadow: rgba(99, 77, 255, 0.06);\n\t--color-link: #7e8186;\n\t--color-header: #525356;\n\t--color-label: #555555;\n\t--color-input-border: #dbdfe7;\n\t--color-input-text: #71747A;\n\t--color-focus-border: rgb(90, 76, 194);\n\t--color-submit-btn-bg: #ff6d5a;\n\t--color-submit-btn-text: #ffffff;\n\t--color-error: #ea1f30;\n\t--color-required: #ff6d5a;\n\t--color-clear-button-bg: #7e8186;\n\t--color-html-text: #555;\n\t--color-html-link: #ff6d5a;\n\t--color-header-subtext: #7e8186;\n\n\t/* Border Radii */\n\t--border-radius-card: 8px;\n\t--border-radius-input: 6px;\n\t--border-radius-clear-btn: 50%;\n\t--card-border-radius: 8px;\n\n\t/* Spacing */\n\t--padding-container-top: 24px;\n\t--padding-card: 24px;\n\t--padding-test-notice-vertical: 12px;\n\t--padding-test-notice-horizontal: 24px;\n\t--margin-bottom-card: 16px;\n\t--padding-form-input: 12px;\n\t--card-padding: 24px;\n\t--card-margin-bottom: 16px;\n\n\t/* Dimensions */\n\t--container-width: 448px;\n\t--submit-btn-height: 48px;\n\t--checkbox-size: 18px;\n\n\t/* Others */\n\t--box-shadow-card: 0px 4px 16px 0px var(--color-card-shadow);\n\t--opacity-placeholder: 0.5;\n}"
+        }
+      },
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.6,
+      "position": [
+        -256,
+        -96
+      ],
+      "id": "db4185f4-e6d2-4adf-8388-02527a42dd6c",
+      "name": "On form submission",
+      "webhookId": "%%%",
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "%%%",
+          "name": "%%%"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// 表單的資料在最外層，Webhook 的資料在 body 裡，兩種都能讀\nconst f = $input.first().json.body ?? $input.first().json;\nconst pick = prefix => {\n  const k = Object.keys(f).find(k => k.startsWith(prefix));\n  return k ? String(f[k] ?? '').trim() : '';\n};\n// 欄位名稱只比對開頭「分享」，表單全名和捷徑傳的短名都對得上\nconst 分享 = pick('分享');\n// 語音聽寫可能多出空白或標點，先清掉再驗證是不是 6 位數\nconst 貨號輸入 = pick('貨號').replace(/[\\s,，.。]/g, '');\nconst 顏色尺寸 = pick('顏色尺寸');\n\n// 網址裡的內碼：有就直接用；沒有的話，後面用貨號去搜尋\nconst m = 分享.match(/(?:pid|productCode)=(u\\d+)/i);\nconst 網址內碼 = m ? m[1] : null;\n\n// 分享文字裡「獨立的六位數」（去重）。多貨號商品會抓到好幾個，不能亂猜第一個\nconst 文字貨號 = [...new Set(分享.match(/(?<!\\w)\\d{6}(?!\\w)/g) || [])];\n\nconst 問題 = [];\nlet 貨號 = 貨號輸入;                         // 貨號欄有填 → 以貨號欄為準\nif (貨號) {\n  if (!/^\\d{6}$/.test(貨號)) 問題.push({ 欄位: '貨號', 行: null, 訊息: '貨號要是 6 位數字' });\n} else if (文字貨號.length === 1) {\n  貨號 = 文字貨號[0];                         // 分享文字裡剛好一個 → 就是它\n} else if (文字貨號.length > 1) {\n  問題.push({ 欄位: '貨號', 行: null, 訊息: `分享文字裡有多個六位數（${文字貨號.join('、')}），請在貨號欄填你要追的那個` });\n} else {\n  問題.push({ 欄位: '貨號', 行: null, 訊息: '沒有貨號：請在貨號欄填 6 位數貨號' });\n}\n\n// 顏色尺寸：每行一組（這段跟舊版相同）\nconst 組合 = [];\nconst lines = 顏色尺寸.split(/\\r?\\n/).map(s => s.trim()).filter(Boolean);\nlines.forEach((ln, i) => {\n  const parts = ln.split(/\\s+/);\n  if (parts.length < 2) {\n    問題.push({ 欄位: '顏色尺寸', 行: i + 1, 訊息: '格式不對，要「色號或色名 空格 尺寸」' });\n    return;\n  }\n  組合.push({ 行: i + 1, 原文: ln, 顏色: parts.slice(0, -1).join(' '), 尺寸: parts[parts.length - 1] });\n});\nif (lines.length === 0) 問題.push({ 欄位: '顏色尺寸', 行: null, 訊息: '沒有填' });\n\nreturn [{ json: {\n  productCode: 網址內碼, 貨號, 組合,           // productCode 可能是 null，等「取內碼」補\n  原_分享: 分享, 原_貨號: 貨號輸入, 原_顏色尺寸: 顏色尺寸,\n  問題, 階段: '解析',\n  錯誤: 問題.length ? 問題.map(x => x.訊息).join('\\n') : null,\n  候選: ''\n} }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -80,
+        -96
+      ],
+      "id": "716fb997-e4a9-45ce-8dec-0bb4190572e2",
+      "name": "解析"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "ae890474-f8cb-4669-a6e8-5ec2a2874f08",
+              "leftValue": "={{ $json.錯誤 }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        80,
+        -96
+      ],
+      "id": "1fda2836-86db-4720-8682-f27e8e18142b",
+      "name": "解析有錯？"
+    },
+    {
+      "parameters": {
+        "url": "https://d.uniqlo.com/tw/p/product/detail",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "productCode",
+              "value": "={{ $json.productCode }}"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "user-agent",
+              "value": "%%%"
+            }
+          ]
+        },
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        720,
+        304
+      ],
+      "id": "5a761bb3-f03d-42b2-8b19-dd4efb586087",
+      "name": "抓商品",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "function findAll(obj, key, out = []) {\n  if (obj === null || typeof obj !== 'object') return out;\n  if (key in obj) out.push(obj[key]);\n  for (const k of Object.keys(obj)) findAll(obj[k], key, out);\n  return out;\n}\nconst p = $('取內碼').last().json;\nconst base = { 原_分享: p.原_分享, 原_貨號: p.原_貨號, 原_顏色尺寸: p.原_顏色尺寸 };\nconst d = $input.first().json;\nconst rows = findAll(d, 'rows')\n  .find(r => Array.isArray(r) && r.length > 0 && r[0] && r[0].productId) || [];\nif (rows.length === 0) {\n  const 問題 = [{ 欄位: '分享', 行: null, 訊息: `抓不到商品資料（內碼 ${p.productCode}）` }];\n  return [{ json: { ...base, 問題, 階段: '比對', 錯誤: 問題.map(x => x.訊息).join('\\n'), 候選: '' } }];\n}\n\nconst norm = s => String(s ?? '').trim().toLowerCase().replace(/\\s+/g, '');\nconst colorKey = s => norm(s).replace(/^col/, '');\nconst noZero = x => String(x).replace(/^0+(?=\\d)/, '');\n// 尺寸比對：「64」「64cm」「26inch」都只比數字部分；S/M/L/XL 照字串比\nconst sizeKey = x => {\n  const n = norm(x);\n  const m = n.match(/^(\\d+(?:\\.\\d+)?)(cm|inch|in|吋|\")?$/);\n  return m ? m[1] : n;\n};\n// 從 styleText 取貨號：「480054 / 09 BLACK」→ 480054\nconst 款Of = r => (String(r.styleText ?? '').match(/\\d{6}/) || [''])[0];\n\nconst ok = [];\nconst bad = [];\nfor (const g of p.組合) {\n  // 顏色欄裡的六位數是「貨號」（再版用），拆出來；剩下的才是色號或色名\n  const toks = String(g.顏色).trim().split(/\\s+/);\n  const 指定款 = toks.find(t => /^\\d{6}$/.test(t)) || '';\n  const c = norm(toks.filter(t => t !== 指定款).join(' '));\n  const isDigits = /^\\d+$/.test(c);\n\n  let hits = rows.filter(r => {\n    if (sizeKey(r.size) !== sizeKey(g.尺寸)) return false;\n    const code = colorKey(r.colorNo);\n    if (isDigits) return noZero(code) === noZero(c);   // 只打數字：只比色號\n    return code === colorKey(c) || norm(r.styleText).includes(c);\n  });\n  if (指定款) {\n    hits = hits.filter(r => 款Of(r) === 指定款);         // 你有寫貨號：照你寫的\n  } else if (hits.length > 1) {                          // 沒寫、但同色號有多個貨號：用表單的貨號挑\n    const narrowed = hits.filter(r => 款Of(r) === String(p.貨號));\n    if (narrowed.length) hits = narrowed;\n  }\n\n  if (hits.length === 1) {\n    const h = hits[0];\n    ok.push({ ...base, 行: g.行, 貨號: p.貨號, 內碼: p.productCode, 色號: h.colorNo, 尺寸: h.size,\n      商品名: h.name, 色名: h.styleText, 現價: h.price });\n  } else {\n    bad.push({ 欄位: '顏色尺寸', 行: g.行,\n      訊息: hits.length === 0 ? '找不到符合的顏色與尺寸'\n        : '符合不只一個，請在色號後面加貨號（例：COL09 483537 M）' });\n  }\n}\nif (bad.length) {\n  const by = {};\n  for (const r of rows) {\n    const 款 = 款Of(r);\n    const 色名 = String(r.styleText ?? '').split('/').slice(1).join('/').trim() || r.styleText;\n    (by[`${r.colorNo}${款 ? ' ' + 款 : ''}（${色名}）`] ??= []).push(r.size);\n  }\n  const 候選 = Object.entries(by).map(([k, v]) => `${k}：${[...new Set(v)].join('、')}`).join('\\n');\n  return [{ json: { ...base, 問題: bad, 階段: '比對', 錯誤: bad.map(x => `第 ${x.行} 行：${x.訊息}`).join('\\n'), 候選 } }];\n}\nreturn ok.map(o => ({ json: o }));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        864,
+        304
+      ],
+      "id": "9c81c9e7-6e2d-4c30-a066-1d4b9f056afb",
+      "name": "比對"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "882f44f5-b7df-4835-9546-c178ef309c25",
+              "leftValue": "={{ $json.錯誤 }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1008,
+        304
+      ],
+      "id": "3e0baa78-6433-45f8-a238-3e173839a9bd",
+      "name": "比對有錯？",
+      "executeOnce": false
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "documentId": {
+          "__rl": true,
+          "value": "%%%",
+          "mode": "list",
+          "cachedResultName": "%%%",
+          "cachedResultUrl": "%%%"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "追蹤清單",
+          "cachedResultUrl": "%%%"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1168,
+        496
+      ],
+      "id": "2648cf20-98d8-45e6-aa22-6086fc81343e",
+      "name": "讀清單",
+      "executeOnce": true,
+      "credentials": {
+        "googleApi": {
+          "id": "%%%",
+          "name": "%%%"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const incoming = $('比對').all().map(i => i.json);\nconst key = (a, b, c) => [a, b, c].map(v => String(v ?? '').trim()).join('|');\nconst have = new Map($input.all().map(i => i.json)\n  .map(r => [key(r['內碼'], r['色號'], r['尺寸']), r]));\nconst fresh = [], skipped = [], dups = [], seen = new Set();\nfor (const h of incoming) {\n  const k = key(h.內碼, h.色號, h.尺寸);\n  if (have.has(k)) {\n    const r = have.get(k);\n    const 說明 = `${h.色名} ${h.尺寸}（清單第 ${r.row_number} 列，啟用：${r['啟用']}）`;\n    skipped.push(說明);\n    dups.push({ 欄位: '顏色尺寸', 行: h.行, 訊息: `已在追蹤清單：${說明}` });\n  } else if (seen.has(k)) {\n    skipped.push(`${h.色名} ${h.尺寸}（這次重複輸入）`);\n    dups.push({ 欄位: '顏色尺寸', 行: h.行, 訊息: '這次重複輸入' });\n  } else { seen.add(k); fresh.push(h); }\n}\nconst 略過 = skipped.join('；');\nif (fresh.length === 0) {\n  const h0 = incoming[0];\n  return [{ json: { 原_分享: h0.原_分享, 原_貨號: h0.原_貨號, 原_顏色尺寸: h0.原_顏色尺寸,\n    問題: dups, 階段: '查重複', 錯誤: `這次的組合全都已經在追蹤了：${略過}`, 候選: '' } }];\n}\nreturn fresh.map(h => ({ json: { ...h, 庫存門檻: 20, 啟用: 'Y', 略過, 略過數: skipped.length } }));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1312,
+        496
+      ],
+      "id": "c8022c19-c8c4-45f9-970e-c81644447662",
+      "name": "查重複"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "fc53f176-4b09-4d7b-a75f-8369c7b49825",
+              "leftValue": "={{ $json.錯誤 }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1472,
+        496
+      ],
+      "id": "c173e90b-3ae1-4bc1-a0d9-504f985f3716",
+      "name": "重複？"
+    },
+    {
+      "parameters": {
+        "authentication": "%%%",
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "%%%",
+          "mode": "list",
+          "cachedResultName": "%%%",
+          "cachedResultUrl": "%%%"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "追蹤清單",
+          "cachedResultUrl": "%%%"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "貨號": "={{ $json.貨號}}",
+            "內碼": "={{ $json.內碼 }}",
+            "色號": "={{ $json.色號 }}",
+            "尺寸": "={{ $json.尺寸 }}",
+            "庫存門檻": "={{ $json.庫存門檻 }}",
+            "啟用": "={{ $json.啟用 }}",
+            "商品名稱": "={{ $json.商品名 }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "貨號",
+              "displayName": "貨號",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "內碼",
+              "displayName": "內碼",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "色號",
+              "displayName": "色號",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "尺寸",
+              "displayName": "尺寸",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "庫存門檻",
+              "displayName": "庫存門檻",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "啟用",
+              "displayName": "啟用",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "上次現價",
+              "displayName": "上次現價",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "上次價格類型",
+              "displayName": "上次價格類型",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "降價次數",
+              "displayName": "降價次數",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "上次庫存",
+              "displayName": "上次庫存",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "最後檢查時間",
+              "displayName": "最後檢查時間",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "已提醒結束時間",
+              "displayName": "已提醒結束時間",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "商品名稱",
+              "displayName": "商品名稱",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1648,
+        576
+      ],
+      "id": "ca9c8264-cc12-4b37-a656-9e2e05a56aac",
+      "name": "新增追蹤列",
+      "credentials": {
+        "googleApi": {
+          "id": "%%%",
+          "name": "%%%"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "%%%",
+          "mode": "list",
+          "cachedResultUrl": "%%%",
+          "cachedResultName": "Price_and_Stock_Notification_Uniqlo_2026%%"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "waitForSubWorkflow": false
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.4,
+      "position": [
+        1824,
+        576
+      ],
+      "id": "539af548-72eb-4281-bd4c-9779fc3f2a9f",
+      "name": "Call 'Price_and_Stock_Notification_Uniqlo_2026%%'"
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $('查重複').all().map(i => i.json);\nconst h0 = items[0];\nconst lines = items.map(h => `　🆗 ${h.色名} ${h.尺寸}（NT$ ${h.現價}）`).join('\\n');\nlet 訊息 = `🤑 已新增 ${items.length} 筆追蹤\\n${h0.商品名}\\n${lines}`;\nif (h0.略過數) 訊息 += `\\n\\n略過 ${h0.略過數} 筆（已在追蹤）：${h0.略過}`;\n訊息 += '\\n\\n「🆕 開始追蹤」通知會發到追價頻道。';\nreturn [{ json: { 訊息 } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1984,
+        576
+      ],
+      "id": "d05ae95f-1ba8-4d6e-a862-4815e6dc7ebc",
+      "name": "彙整"
+    },
+    {
+      "parameters": {
+        "authentication": "webhook",
+        "content": "={{ $json.訊息 }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.discord",
+      "typeVersion": 2,
+      "position": [
+        2432,
+        -112
+      ],
+      "id": "697e4d2e-4a15-4e8a-a8e8-ab05bf511e8e",
+      "name": "通知結果",
+      "webhookId": "%%%",
+      "credentials": {
+        "discordWebhookApi": {
+          "id": "%%%",
+          "name": "%%%"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const e = $input.first().json;\nconst 問題 = e.問題 ?? [];\nconst 整欄問題 = f => 問題.filter(x => x.欄位 === f && x.行 == null);\nconst 該行問題 = n => 問題.filter(x => x.欄位 === '顏色尺寸' && x.行 === n);\nconst cut = (s, n) => {\n  s = String(s ?? '').replace(/\\s+/g, ' ').trim();\n  return s.length > n ? s.slice(0, n) + '…' : s;\n};\nconst lines = String(e.原_顏色尺寸 ?? '').split(/\\r?\\n/).map(s => s.trim()).filter(Boolean);\n// 解析階段就卡在內碼或貨號 → 顏色尺寸還沒比對過，用 ➖ 表示「未檢查」\n// 原本只有「解析」階段才算未檢查；現在「查內碼」失敗時，顏色尺寸也還沒比對過\nconst 未檢查 = (e.階段 === '解析' || e.階段 === '查內碼') && 問題.some(x => x.欄位 === '分享' || x.欄位 === '貨號');\n\nconst out = [' 💔 新增追蹤失敗，這次沒有寫入任何資料', '──────────────'];\n\nconst a = 整欄問題('分享');\nout.push(`📎 分享內容或網址　${a.length ? '🆘' : '👌'}`);\nout.push(`　${cut(e.原_分享, 60) || '（空白）'}`);\na.forEach(x => out.push(`　→ ${x.訊息}`));\n\nconst b = 整欄問題('貨號');\nout.push(`🔢 貨號　${b.length ? '🆘' : '👌'}　${cut(e.原_貨號, 20) || '（沒填）'}`);\nb.forEach(x => out.push(`　→ ${x.訊息}`));\n\nconst c = 整欄問題('顏色尺寸');\nconst 有行問題 = lines.some((_, i) => 該行問題(i + 1).length);\nout.push(`🎨 顏色尺寸　${c.length || 有行問題 ? '🆘' : (未檢查 ? '🔙' : '👌')}`);\nc.forEach(x => out.push(`　→ ${x.訊息}`));\nlines.forEach((ln, i) => {\n  const ps = 該行問題(i + 1);\n  if (ps.length) out.push(`　🆘 ${ln}　← ${ps.map(x => x.訊息).join('；')}`);\n  else out.push(`　${未檢查 ? '🔙' : '👌'} ${ln}`);\n});\n\nif (e.候選) {\n  const 候選 = e.候選.length > 700 ? e.候選.slice(0, 700) + '\\n…（太長，已截斷）' : e.候選;\n  out.push('──────────────', '可選的顏色尺寸：', 候選);\n}\nout.push('──────────────', '修改後請重新送出表單。要複製的內容：');\n// 網址：從分享內容裡抓第一段 https://…\nconst url = (String(e.原_分享 ?? '').match(/https?:\\/\\/\\S+/) || [''])[0];\n// 貨號：跟 `解析` 同樣的規則（分享文字裡獨立的六位數；沒有就用「貨號」欄）\nconst m6 = String(e.原_分享 ?? '').match(/(?<!\\w)(\\d{6})(?!\\w)/);\n// 貨號欄有填就用它；沒填才從分享文字抓（跟「解析」同一個順序）\nconst 貨號 = String(e.原_貨號 ?? '').trim() || (m6 ? m6[1] : '');\n// 有內容才放區塊\nconst block = (標題, 內容) => { if (內容) out.push(標題, '```', 內容, '```'); };\nblock('網址', url.slice(0, 400));\nblock('貨號', 貨號);\nblock('顏色尺寸', lines.join('\\n'));\n\nreturn [{ json: { 訊息: out.join('\\n') } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1984,
+        176
+      ],
+      "id": "dcb190ec-8c8e-4e02-b41f-bc1cd8d8df3e",
+      "name": "組錯誤訊息"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://d.uniqlo.com/tw/p/search/products/by-description",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "accept",
+              "value": "application/json"
+            },
+            {
+              "name": "accept-language",
+              "value": "zh-TW,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6,zh-CN;q=0.5,ja;q=0.4"
+            },
+            {
+              "name": "authorization",
+              "value": "%%%"
+            },
+            {
+              "name": "langcode",
+              "value": "zh_TW"
+            },
+            {
+              "name": "origin",
+              "value": "https://www.uniqlo.com"
+            },
+            {
+              "name": "priority",
+              "value": "u=1, i"
+            },
+            {
+              "name": "referer",
+              "value": "https://www.uniqlo.com/"
+            },
+            {
+              "name": "sec-ch-ua",
+              "value": "\"Chromium\";v=\"154\", \"Microsoft Edge\";v=\"154\", \"Not A(Brand\";v=\"99\""
+            },
+            {
+              "name": "sec-ch-ua-mobile",
+              "value": "?0"
+            },
+            {
+              "name": "sec-ch-ua-platform",
+              "value": "\"Windows\""
+            },
+            {
+              "name": "sec-fetch-dest",
+              "value": "empty"
+            },
+            {
+              "name": "sec-fetch-mode",
+              "value": "cors"
+            },
+            {
+              "name": "sec-fetch-site",
+              "value": "same-site"
+            },
+            {
+              "name": "user-agent",
+              "value": "%%%"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json; charset=utf-8",
+        "body": "={\"pageInfo\":{\"page\":1,\"pageSize\":24},\"belongTo\":\"pc\",\"rank\":\"overall\",\"priceRange\":{\"low\":0,\"high\":0},\"color\":[],\"size\":[],\"identity\":[],\"exist\":[],\"storeCode\":\"102363\",\"searchFlag\":true,\"description\":\"{{ $json.貨號 }}\",\"stockFilter\":\"all\"}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        256,
+        112
+      ],
+      "id": "11d83588-1563-4050-a73e-2975879e1f15",
+      "name": "搜尋貨號",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const p = $('解析').last().json;               // 解析的資料（貨號、顏色尺寸等）\nconst res = $input.first().json;               // 搜尋結果\nconst 貨號 = String(p.貨號);\n\n// 搜尋回傳裡，找出所有有 productName 的物件（不管包在哪一層）\nconst collect = (o, out = []) => {\n  if (o === null || typeof o !== 'object') return out;\n  if (typeof o.productName === 'string') out.push(o);\n  for (const k of Object.keys(o)) collect(o[k], out);\n  return out;\n};\n// 內碼：優先讀 productCode 欄位；沒有就從主圖路徑撈（/hmall/test/u0000000054254/...）\nconst 內碼Of = o => (`${o.productCode ?? ''} ${o.mainPic ?? ''}`.match(/u\\d{6,}/) || [''])[0];\n\n// 搜尋是模糊比對，所以要再確認「商品名稱裡真的有這個獨立的貨號」\nconst re = new RegExp(`(?<!\\\\d)${貨號}(?!\\\\d)`);\nconst codes = [...new Set(collect(res).filter(o => re.test(o.productName)).map(內碼Of).filter(Boolean))];\n\nconst fail = 訊息 => [{ json: { ...p, 問題: [{ 欄位: '貨號', 行: null, 訊息 }], 階段: '查內碼', 錯誤: 訊息 } }];\n\nif (p.productCode) return [{ json: { ...p, 錯誤: null } }];   // 網址有內碼 → 直接用，搜尋失敗也不擋\nif (res.error) return fail('貨號搜尋的請求失敗了，稍後再試或改貼網址');\nif (codes.length === 0) return fail(`搜尋找不到貨號 ${貨號}（打錯，或商品已下架）`);\nif (codes.length > 1) return fail(`貨號 ${貨號} 對到多個商品，請改貼網址`);\nreturn [{ json: { ...p, productCode: codes[0], 錯誤: null } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        400,
+        112
+      ],
+      "id": "999580d5-03ce-474d-b36d-1eb5917e53e5",
+      "name": "取內碼"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "cd7c59ee-3a4e-409c-8723-b46bc862ff10",
+              "leftValue": "={{ $json.錯誤 }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        544,
+        112
+      ],
+      "id": "8a674d65-b825-4f3c-b28a-46d2dd12c16d",
+      "name": "查內碼有錯？"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "REDACTED_WEBHOOK_PATH",
+        "authentication": "%%%",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -432,
+        -320
+      ],
+      "id": "fcdf47b4-2b43-4c00-aff8-3116be6a4fc0",
+      "name": "Webhook",
+      "webhookId": "%%%",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "%%%",
+          "name": "%%%"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "bd2a10f8-b1c2-413e-94a6-d4a383e38a19",
+              "leftValue": "={{ ['停追','啟用'].includes($json.body.動作) }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -256,
+        -320
+      ],
+      "id": "0c13b0cd-65ea-4763-8a59-0f628a84ddfb",
+      "name": "動作？"
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "documentId": {
+          "__rl": true,
+          "value": "%%%",
+          "mode": "list",
+          "cachedResultName": "%%%",
+          "cachedResultUrl": "%%%"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "%%%",
+          "cachedResultUrl": "%%%"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        -80,
+        -480
+      ],
+      "id": "78c42ef2-e8c7-43e1-b03a-127abe2c4198",
+      "name": "讀清單(停追用)",
+      "executeOnce": true,
+      "credentials": {
+        "googleApi": {
+          "id": "%%%",
+          "name": "%%%"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "383f105a-de5f-4733-89d0-10d3ca31d28a",
+              "leftValue": "={{ $json.錯誤 }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        240,
+        -480
+      ],
+      "id": "f9d9d54c-6e51-485e-82ab-ffdcc8476717",
+      "name": "找列有錯？"
+    },
+    {
+      "parameters": {
+        "authentication": "%%%",
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "%%%",
+          "mode": "list",
+          "cachedResultName": "%%%",
+          "cachedResultUrl": "%%%"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "%%%",
+          "cachedResultUrl": "%%%"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "row_number": "={{ $json.row_number }}",
+            "啟用": "={{ $json.新_啟用 }}",
+            "上次現價": "={{ $json.新_上次現價 }}"
+          },
+          "matchingColumns": [
+            "row_number"
+          ],
+          "schema": [
+            {
+              "id": "貨號",
+              "displayName": "貨號",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "內碼",
+              "displayName": "內碼",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "色號",
+              "displayName": "色號",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "尺寸",
+              "displayName": "尺寸",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "庫存門檻",
+              "displayName": "庫存門檻",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "啟用",
+              "displayName": "啟用",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "上次現價",
+              "displayName": "上次現價",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "上次價格類型",
+              "displayName": "上次價格類型",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "降價次數",
+              "displayName": "降價次數",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "上次庫存",
+              "displayName": "上次庫存",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "最後檢查時間",
+              "displayName": "最後檢查時間",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "已提醒結束時間",
+              "displayName": "已提醒結束時間",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "商品名稱",
+              "displayName": "商品名稱",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "row_number",
+              "displayName": "row_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "readOnly": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        400,
+        -304
+      ],
+      "id": "6e0ba592-abc0-4fa4-82f8-2453e7715615",
+      "name": "更新啟用狀態",
+      "credentials": {
+        "googleApi": {
+          "id": "%%%",
+          "name": "%%%"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// 彙整成一則通知；列太多時只列前 15 列，避免超過 Discord 字數上限\nconst items = $('找列').all().map(i => i.json);\nconst 動作 = items[0].動作;\nconst 列出 = items.slice(0, 15).map(r =>\n  `・${r.貨號} ${r.色號} ${r.尺寸}${r.商品名稱 ? `｜${String(r.商品名稱).slice(0, 30)}` : ''}`);\nif (items.length > 15) 列出.push(`…另外 ${items.length - 15} 列`);\nconst 附註 = items[0].附註 ? `\\n${items[0].附註}` : '';\nconst 訊息 = 動作 === '停追'\n  ? `⏸️ 已停追 ${items.length} 列\\n${列出.join('\\n')}${附註}`\n  : `已重新啟用。（${items.length} 列）\\n${列出.join('\\n')}${附註}`;\nreturn [{ json: { 訊息 } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        544,
+        -304
+      ],
+      "id": "7ebdedbc-5c9d-447d-8e4c-f1b05186c21b",
+      "name": "組結果"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 停追／啟用：依貨號（＋顏色尺寸）在追蹤清單找出要改的列\nconst b = $('Webhook').first().json.body ?? {};\nconst 動作 = String(b['動作'] ?? '').trim();               // 「停追」或「啟用」\nconst 貨號 = String(b['貨號'] ?? '').trim();\nconst 輸入原 = String(b['顏色尺寸'] ?? '').trim();            // 留空 = 該貨號全部列\n// 語音很難「留空」，所以說「整件」或「全部」也視為整個貨號\nconst 輸入 = ['整件', '全部'].includes(輸入原) ? '' : 輸入原;\nconst rows = $input.all().map(i => i.json);\n\n// 出錯或沒東西可改：回一筆帶「錯誤」的資料，後面直接送去通知\nconst stop = 訊息 => [{ json: { 錯誤: 訊息, 訊息 } }];\n\nif (!/^\\d{6}$/.test(貨號)) return stop(`❌ ${動作}失敗：貨號要是 6 位數字`);\nconst 同貨號 = rows.filter(r => String(r['貨號'] ?? '').trim() === 貨號);\nif (同貨號.length === 0) return stop(`❌ ${動作}失敗：追蹤清單裡沒有貨號 ${貨號}`);\n\n// 目標列：沒填顏色尺寸 → 整個貨號；有填 → 一行一組「色號 尺寸」\nlet 目標 = [];\nconst 找不到 = [];\nif (!輸入) {\n  目標 = 同貨號;\n} else {\n  for (const ln of 輸入.split(/\\r?\\n/).map(s => s.trim()).filter(Boolean)) {\n    const parts = ln.split(/\\s+/);\n    if (parts.length < 2) { 找不到.push(`${ln}（格式要「色號 空格 尺寸」）`); continue; }\n    const 尺寸 = parts[parts.length - 1].toLowerCase();\n    const c = parts.slice(0, -1).join(' ').toUpperCase();\n    const 色號 = /^\\d+$/.test(c) ? `COL${c}` : c;          // 78 → COL78；直接打 COL78 也行\n    const hit = 同貨號.filter(r =>\n      String(r['色號'] ?? '').trim().toUpperCase() === 色號 &&\n      String(r['尺寸'] ?? '').trim().toLowerCase() === 尺寸);\n    if (hit.length === 0) 找不到.push(ln); else 目標.push(...hit);\n  }\n}\n目標 = [...new Set(目標)];   // 去掉重複的列\n\n// 只處理「需要改」的列：停追 → 目前不是 N；啟用 → 目前不是 Y\nconst 現在 = r => String(r['啟用'] ?? '').trim().toUpperCase();\nconst 要改 = 目標.filter(r => 動作 === '停追' ? 現在(r) !== 'N' : 現在(r) !== 'Y');\n\nconst 已是 = 目標.length - 要改.length;\nconst 附註 = [\n  已是 > 0 ? `（${已是} 列本來就是${動作 === '停追' ? '停追' : '啟用'}狀態）` : '',\n  找不到.length ? `找不到：${找不到.join('、')}` : ''\n].filter(Boolean).join('\\n');\n\nif (要改.length === 0) return stop(`ℹ️ 沒有需要${動作}的列\\n${附註}`.trim());\n\nreturn 要改.map(r => ({ json: {\n  row_number: r.row_number, 動作, 貨號: r['貨號'], 色號: r['色號'], 尺寸: r['尺寸'],\n  商品名稱: r['商品名稱'] ?? '',\n  新_啟用: 動作 === '停追' ? 'N' : 'Y',\n  // 啟用時清空「上次現價」→ 下一輪視為新追蹤、重發「開始追蹤」；停追時原值寫回，等於不動\n  新_上次現價: 動作 === '啟用' ? '' : (r['上次現價'] ?? ''),\n  附註\n} }));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        80,
+        -480
+      ],
+      "id": "ad537f9a-e26d-436f-ae7c-ff1a2c675eae",
+      "name": "找列"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "On form submission": {
+      "main": [
+        [
+          {
+            "node": "解析",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "解析": {
+      "main": [
+        [
+          {
+            "node": "解析有錯？",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "解析有錯？": {
+      "main": [
+        [
+          {
+            "node": "組錯誤訊息",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "搜尋貨號",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "抓商品": {
+      "main": [
+        [
+          {
+            "node": "比對",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "比對": {
+      "main": [
+        [
+          {
+            "node": "比對有錯？",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "比對有錯？": {
+      "main": [
+        [
+          {
+            "node": "組錯誤訊息",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "讀清單",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "讀清單": {
+      "main": [
+        [
+          {
+            "node": "查重複",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "查重複": {
+      "main": [
+        [
+          {
+            "node": "重複？",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "重複？": {
+      "main": [
+        [
+          {
+            "node": "組錯誤訊息",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "新增追蹤列",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "新增追蹤列": {
+      "main": [
+        [
+          {
+            "node": "Call 'Price_and_Stock_Notification_Uniqlo_2026%%'",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call 'Price_and_Stock_Notification_Uniqlo_2026%%'": {
+      "main": [
+        [
+          {
+            "node": "彙整",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "彙整": {
+      "main": [
+        [
+          {
+            "node": "通知結果",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "組錯誤訊息": {
+      "main": [
+        [
+          {
+            "node": "通知結果",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "搜尋貨號": {
+      "main": [
+        [
+          {
+            "node": "取內碼",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "取內碼": {
+      "main": [
+        [
+          {
+            "node": "查內碼有錯？",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "查內碼有錯？": {
+      "main": [
+        [
+          {
+            "node": "組錯誤訊息",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "抓商品",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "動作？",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "動作？": {
+      "main": [
+        [
+          {
+            "node": "讀清單(停追用)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "解析",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "讀清單(停追用)": {
+      "main": [
+        [
+          {
+            "node": "找列",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "找列有錯？": {
+      "main": [
+        [
+          {
+            "node": "通知結果",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "更新啟用狀態",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "更新啟用狀態": {
+      "main": [
+        [
+          {
+            "node": "組結果",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "組結果": {
+      "main": [
+        [
+          {
+            "node": "通知結果",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "找列": {
+      "main": [
+        [
+          {
+            "node": "找列有錯？",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "98557c72-5fa9-4bb6-bc72-c8701af6d7ba",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "%%%"
+  },
+  "nodeGroups": [],
+  "id": "F4GeCP9Z9dGJ2hTJ",
+  "tags": []
+}

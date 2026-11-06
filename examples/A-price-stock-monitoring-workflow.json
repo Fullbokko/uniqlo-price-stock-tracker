@@ -1,0 +1,929 @@
+{
+  "name": "商品價格與庫存監測",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -368,
+        0
+      ],
+      "id": "%%%%%%",
+      "name": "When clicking ‘Execute workflow’"
+    },
+    {
+      "parameters": {
+        "jsCode": "const rows = $input.all().map(i => i.json);\nconst groups = {};\nfor (const r of rows) {\n  if (String(r['啟用']).trim().toUpperCase() !== 'Y') continue;\n  const code = String(r['內碼']).trim();\n  if (!groups[code]) groups[code] = { productCode: code, tracked: [] };\n  groups[code].tracked.push(r);\n}\nreturn Object.values(groups).map(g => ({ json: g }));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        144,
+        0
+      ],
+      "id": "%%%%%%",
+      "name": "分組"
+    },
+    {
+      "parameters": {
+        "jsCode": "function findAll(obj, key, out = []) {\n  if (obj === null || typeof obj !== 'object') return out;\n  if (key in obj) out.push(obj[key]);\n  for (const k of Object.keys(obj)) findAll(obj[k], key, out);\n  return out;\n}\nfunction findFirst(obj, key) {\n  return findAll(obj, key).find(v => v !== null && v !== undefined);\n}\nconst tw = ms => new Date(ms).toLocaleString('sv-SE', { timeZone: 'Asia/Taipei' });\n\nconst products = $('抓商品').all();\nconst groups = $('分組').all();\nconst expand = $('展開門市').all();\n\n// 整理門市庫存：groupIndex -> [{ key, 名稱, 順位, stocks }]\nconst storeByGroup = {};\n$input.all().forEach((item, j) => {\n  const meta = expand[j].json;\n  const stocks = findAll(item.json, 'skuPickupStocks').find(s => s && typeof s === 'object') || null;\n  storeByGroup[meta.groupIndex] = storeByGroup[meta.groupIndex] || [];\n  storeByGroup[meta.groupIndex].push({ key: meta.siteId, 名稱: meta.門市, 順位: meta.順位, stocks });\n});\n\nconst results = [];\nproducts.forEach((item, i) => {\n  const d = item.json;\n  const tracked = groups[i].json.tracked;\n  const skuRows = findAll(d, 'rows')\n    .find(r => Array.isArray(r) && r.length > 0 && r[0] && r[0].productId) || [];\n  const stock = findAll(d, 'stockInfo').find(s => s && s.skuStocks) || {};\n  const origin = findFirst(d, 'originPrice');\n  const endMs = findFirst(d, 'timeLimitedEnd');\n  const stores = (storeByGroup[i] || []).slice().sort((a, b) => a.順位 - b.順位);\n\n  if (skuRows.length === 0) {\n    for (const t of tracked) {\n      results.push({ json: { 錯誤: `抓不到商品資料（內碼 ${groups[i].json.productCode}）`, row_number: t.row_number } });\n    }\n    return;\n  }\n\n  for (const t of tracked) {\n    const color = String(t['色號']).trim();\n    const size = String(t['尺寸']).trim();\n        // 同色號同尺寸有多筆（再版＝不同貨號）→ 用清單 A 欄的貨號挑；只有一筆就照舊\n    const same = skuRows.filter(r => r.colorNo === color && r.size === size);\n    const 貨號字 = String(t['貨號'] ?? '').trim();\n    const sku = same.length > 1\n      ? (same.find(r => String(r.styleText ?? '').includes(貨號字) || String(r.name ?? '').includes(貨號字)) ?? same[0])\n      : same[0];\n    if (!sku) {\n      results.push({ json: { 錯誤: `找不到 ${t['貨號']} ${color} ${size}`, row_number: t.row_number } });\n      continue;\n    }\n    const id = sku.productId;\n    const remindMs = endMs ? endMs + 1000 - 12 * 3600 * 1000 - 2 * 86400 * 1000 : null;\n    results.push({ json: {\n      row_number: t.row_number,\n      內碼: String(t['內碼'] ?? '').trim(),   // 新增：給判斷組商品頁連結用\n      貨號: t['貨號'], 色號: color, 尺寸: size, 庫存門檻: t['庫存門檻'],\n      商品名: sku.name, 色名: sku.styleText,\n      價格類型: sku.priceType, 現價: sku.price, 原價: origin,\n      庫存: [\n        { key: 'web', 來源: '宅配/超取', 數量: stock.expressSkuStocks?.[id] ?? null },\n        ...stores.map(s => ({ key: s.key, 來源: s.名稱, 數量: s.stocks ? (s.stocks[id] ?? null) : null }))\n      ],\n      期間限定結束_ms: endMs ?? null,\n      期間限定結束: endMs ? tw(endMs) : null,\n      提醒時間_ms: remindMs\n    }});\n  }\n});\nreturn results;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        784,
+        0
+      ],
+      "id": "%%%%%%",
+      "name": "抽欄位"
+    },
+    {
+      "parameters": {
+        "jsCode": "const now = Date.now();\nconst tw = ms => new Date(ms).toLocaleString('sv-SE', { timeZone: 'Asia/Taipei' });\nconst fmt = n => (n === null || n === undefined || n === '') ? '—' : `NT$${n}`;\nconst TYPE_NAME = { MarketPriceGroup: '一般價', RestrictPriceGroup: '期間限定', VaryPriceGroup: '特價商品' };\nconst toNum = v => (v === '' || v === null || v === undefined) ? null : Number(v);\nconst parseJson = s => { try { const o = JSON.parse(s); return (o && typeof o === 'object') ? o : null; } catch (e) { return null; } };\n\n// 用 row_number 查回追蹤清單裡「上次」的狀態\nconst oldRows = {};\nfor (const g of $('分組').all()) for (const t of g.json.tracked) oldRows[t.row_number] = t;\n\nreturn $input.all().map(item => {\n  const c = item.json;\n\n  if (c.錯誤) {\n    return { json: { ...c, 需記錄: false, 需通知: true, 需更新: false,\n      訊息: `⚠️ 抓價有問題 💦：${c.錯誤}｜${tw(now)}` } };\n  }\n\n  const old = oldRows[c.row_number] || {};\n  const oldPrice = toNum(old['上次現價']);\n  const oldType = old['上次價格類型'] || null;\n  const oldDrops = toNum(old['降價次數']) || 0;\n  // L 欄新格式「結束ms|最後提醒日期」；舊格式只有結束ms，也能讀\n  const oldRemindedRaw = String(old['已提醒結束時間'] ?? '');\n  const [oldEndStr, oldDay] = oldRemindedRaw.split('|');\n  const today = tw(now).slice(0, 10); // 台灣今天日期，例如 2026-10-08\n  const oldStock = parseJson(old['上次庫存']) || {};\n  const first = oldPrice === null;\n  const th = toNum(c.庫存門檻) ?? 5;\n  const icon = n => (n === null || n === undefined) ? '' : (n === 0 ? ' ❌' : (n <= th ? ' 🟡' : ' 🟢'));\n  const typeName = TYPE_NAME[c.價格類型] || c.價格類型;\n\n  const events = [];\n  const notes = [];\n  let drops = oldDrops;\n  let remindedEnd = oldRemindedRaw;\n\n  // 折扣結束時間：只有期間限定有可靠的時間\n  let endText = '';\n  if (c.價格類型 === 'RestrictPriceGroup' && c.期間限定結束_ms && c.期間限定結束_ms > now) {\n    endText = `折扣結束：${tw(c.期間限定結束_ms)}`;\n  } else if (c.價格類型 === 'VaryPriceGroup') {\n    endText = '折扣結束：官網未提供';\n  }\n\n  // 1) 庫存：每個來源各自比對；讀不到的來源維持舊值\n  const newStock = { ...oldStock };\n  const stockLines = [];\n  for (const s of c.庫存) {\n    if (s.數量 === null || s.數量 === undefined) continue;\n    const prev = toNum(oldStock[s.key]);\n    newStock[s.key] = s.數量;\n    if (!first && prev !== null && s.數量 <= th && (prev > th || s.數量 < prev)) {\n      stockLines.push(s.數量 === 0\n        ? `🈚 ${s.來源}：已售完 0${icon(0)}（原本 ${prev}${icon(prev)}）`\n        : `♻ ${s.來源}：剩 ${s.數量} 件${icon(s.數量)}（原本 ${prev} ${icon(prev)}，門檻 ${th}）`);\n      events.push(`庫存少:${s.來源}`);\n    }\n  }\n\n  // 2) 價格\n  if (first) {\n    events.push('初次記錄');\n    const snap = c.庫存.map(s => `${s.來源} ${s.數量 ?? '—'}${icon(s.數量)}`).join('｜');\n    notes.push(`🆕 開始追蹤（${typeName}）`);\n    notes.push(`🈁 目前庫存：${snap}`);\n    if (endText) notes.push(`⏳ ${endText}`);\n  } else if (c.現價 !== oldPrice || c.價格類型 !== oldType) {\n    if (c.現價 < oldPrice) {\n      drops += 1;\n      events.push(`第${drops}次降價`);\n      notes.push(`🈹 第 ${drops} 次降價：${fmt(oldPrice)} → ${fmt(c.現價)}（${typeName}）`);\n      if (endText) notes.push(`⏳ ${endText}`);\n    } else if (c.現價 > oldPrice) {\n      events.push('漲價');\n    } else {\n      events.push('價格類型變更');\n    }\n  }\n  if (stockLines.length) notes.unshift('🔻 庫存減少 🔻');\nnotes.push(...stockLines);\n\n  // 3) 期間限定快結束（每個結束時間只提醒一次）\n  if (c.價格類型 === 'RestrictPriceGroup' && c.期間限定結束_ms && c.提醒時間_ms) {\n  // 同一個結束時間、而且今天已經提醒過 → 不再發\n  const doneToday = oldEndStr === String(c.期間限定結束_ms) && oldDay === today;\n  if (now >= c.提醒時間_ms && now < c.期間限定結束_ms && !doneToday) {\n    notes.push(`⏰ 期間限定即將結束：${tw(c.期間限定結束_ms)}`);\n    remindedEnd = `${c.期間限定結束_ms}|${today}`;\n    }\n  }\n\n  // 標題做成連結；有內碼才做，沒有就維持原本的粗體文字\n  const 內碼 = String(c.內碼 ?? '').trim();\n  const 標題文字 = `${c.商品名}｜${c.色名} ${c.尺寸}`.replace(/[\\[\\]]/g, '');   // 中括號會弄壞連結語法，先拿掉\n// 網址外面再包一層 <>，Discord 就不會自動展開成大張預覽圖\n  const title = 內碼\n  ? `**[${標題文字}](<https://m.uniqlo.com/tw/product?pid=${內碼}>)**`\n  : `**${標題文字}**`;\n  const stockSummary = c.庫存.map(s => `${s.來源} ${s.數量 ?? '—'}`).join('｜');\nconst footer = (first ? '' : `🈁 庫存：${stockSummary}\\n`) + `💸 現價 ${fmt(c.現價)}／原價 ${fmt(c.原價)}｜⌚ ${tw(now)}`;\n\n  return { json: {\n    row_number: c.row_number,\n    需記錄: events.length > 0,\n    需通知: notes.length > 0,\n    需更新: true,\n    訊息: notes.length ? `${title}\\n${notes.join('\\n')}\\n${footer}` : '',\n    // 歷史紀錄的一列\n    時間: tw(now), 貨號: c.貨號, 色號: c.色號, 尺寸: c.尺寸,\n    價格類型: typeName, 現價: c.現價, 原價: c.原價, 降價次數: drops,\n    庫存: c.庫存.map(s => `${s.來源}:${s.數量 ?? '—'}`).join('｜'),\n    事件: events.join('、'),\n    // 要寫回追蹤清單的新狀態\n    新_上次現價: c.現價, 新_上次價格類型: c.價格類型, 新_降價次數: drops,\n    新_上次庫存: JSON.stringify(newStock),\n    新_最後檢查時間: tw(now), 新_已提醒結束時間: remindedEnd ?? ''\n  } };\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        976,
+        0
+      ],
+      "id": "%%%%%%",
+      "name": "判斷"
+    },
+    {
+      "parameters": {
+        "url": "https://d.uniqlo.com/tw/p/product/detail",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "productCode",
+              "value": "={{ $json.productCode }}"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "user-agent",
+              "value": "%%%%%%"
+            }
+          ]
+        },
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        304,
+        0
+      ],
+      "id": "%%%%%%",
+      "name": "抓商品"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 每件商品 × 每間門市 = 一筆請求（順位 1 是首選）\nconst STORES = [\n  { siteId: '1%%%%4', 門市: '%%%%%%', 順位: 1 },\n  { siteId: '1%%%%5', 門市: '%%%%%%', 順位: 2 },\n  { siteId: '1%%%%3', 門市: '%%%%%%', 順位: 3 },\n];\nconst out = [];\n$('分組').all().forEach((g, groupIndex) => {\n  for (const s of STORES) {\n    out.push({ json: { productCode: g.json.productCode, groupIndex, ...s } });\n  }\n});\nreturn out;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        464,
+        0
+      ],
+      "id": "%%%%%%",
+      "name": "展開門市"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://d.uniqlo.com/tw/p/inventory/stock/pickup",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "accept",
+              "value": "application/json"
+            },
+            {
+              "name": "accept-language",
+              "value": "zh-TW,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6,zh-CN;q=0.5,ja;q=0.4"
+            },
+            {
+              "name": "cache-control",
+              "value": "no-cache"
+            },
+            {
+              "name": "langcode",
+              "value": "zh_TW"
+            },
+            {
+              "name": "origin",
+              "value": "https://www.uniqlo.com"
+            },
+            {
+              "name": "pragma",
+              "value": "no-cache"
+            },
+            {
+              "name": "priority",
+              "value": "u=1, i"
+            },
+            {
+              "name": "referer",
+              "value": "https://www.uniqlo.com/"
+            },
+            {
+              "name": "sec-ch-ua",
+              "value": "\"Chromium\";v=\"154\", \"Microsoft Edge\";v=\"154\", \"Not A(Brand\";v=\"99\""
+            },
+            {
+              "name": "sec-ch-ua-mobile",
+              "value": "?0"
+            },
+            {
+              "name": "sec-ch-ua-platform",
+              "value": "\"Windows\""
+            },
+            {
+              "name": "sec-fetch-dest",
+              "value": "empty"
+            },
+            {
+              "name": "sec-fetch-mode",
+              "value": "cors"
+            },
+            {
+              "name": "sec-fetch-site",
+              "value": "same-site"
+            },
+            {
+              "name": "user-agent",
+              "value": "%%%%%%"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json; charset=utf-8",
+        "body": "={{ {\n  productCode: $json.productCode,\n  siteId: $json.siteId,\n  type: \"PICKUP_DETAIL\"\n} }}",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        624,
+        0
+      ],
+      "id": "%%%%%%",
+      "name": "抓門市"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "%%%%%%",
+              "leftValue": "={{ $json.需更新 }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1232,
+        -224
+      ],
+      "id": "%%%%%%",
+      "name": "需更新？"
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "1Cx-_%%%%%%",
+          "mode": "list",
+          "cachedResultName": "Uniqlo價格追蹤",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/%%%%%%"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "追蹤清單",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/%%%%%%"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "上次現價": "={{ $json.新_上次現價 }}",
+            "上次價格類型": "={{ $json.新_上次價格類型 }}",
+            "降價次數": "={{ $json.新_降價次數 }}",
+            "上次庫存": "={{ $json.新_上次庫存 }}",
+            "最後檢查時間": "={{ $json.新_最後檢查時間 }}",
+            "已提醒結束時間": "={{ $json.新_已提醒結束時間 }}",
+            "row_number": "={{ $json.row_number }}"
+          },
+          "matchingColumns": [
+            "row_number"
+          ],
+          "schema": [
+            {
+              "id": "貨號",
+              "displayName": "貨號",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "內碼",
+              "displayName": "內碼",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "色號",
+              "displayName": "色號",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "尺寸",
+              "displayName": "尺寸",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "庫存門檻",
+              "displayName": "庫存門檻",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "啟用",
+              "displayName": "啟用",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "上次現價",
+              "displayName": "上次現價",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "上次價格類型",
+              "displayName": "上次價格類型",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "降價次數",
+              "displayName": "降價次數",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "上次庫存",
+              "displayName": "上次庫存",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "最後檢查時間",
+              "displayName": "最後檢查時間",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "已提醒結束時間",
+              "displayName": "已提醒結束時間",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "row_number",
+              "displayName": "row_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "readOnly": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1472,
+        -240
+      ],
+      "id": "%%%%%%",
+      "name": "更新清單",
+      "retryOnFail": true,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "googleApi": {
+          "id": "%%%%%%",
+          "name": "Service Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "%%%%%%",
+              "leftValue": "={{ $json.需記錄 }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1232,
+        80
+      ],
+      "id": "%%%%%%",
+      "name": "需記錄？"
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "1Cx-_%%%%%%",
+          "mode": "list",
+          "cachedResultName": "Uniqlo價格追蹤",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1Cx-%%%%%%"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 711632898,
+          "mode": "list",
+          "cachedResultName": "歷史紀錄",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1Cx-%%%%%%"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "時間",
+              "displayName": "時間",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "貨號",
+              "displayName": "貨號",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "色號",
+              "displayName": "色號",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "尺寸",
+              "displayName": "尺寸",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "價格類型",
+              "displayName": "價格類型",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "現價",
+              "displayName": "現價",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "原價",
+              "displayName": "原價",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "降價次數",
+              "displayName": "降價次數",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "庫存",
+              "displayName": "庫存",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "事件",
+              "displayName": "事件",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "row_number",
+              "displayName": "row_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "readOnly": true,
+              "removed": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1472,
+        64
+      ],
+      "id": "%%%%%%",
+      "name": "寫歷史",
+      "retryOnFail": true,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "googleApi": {
+          "id": "%%%%%%",
+          "name": "Service Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "%%%%%%",
+              "leftValue": "={{ $json.需通知 }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1232,
+        384
+      ],
+      "id": "%%%%%%",
+      "name": "需通知？"
+    },
+    {
+      "parameters": {
+        "authentication": "webhook",
+        "content": "={{ $json.訊息 }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.discord",
+      "typeVersion": 2,
+      "position": [
+        1472,
+        368
+      ],
+      "id": "%%%%%%",
+      "name": "Discord",
+      "webhookId": "%%%%%%",
+      "credentials": {
+        "discordWebhookApi": {
+          "id": "%%%%%%",
+          "name": "UQ_%%%%"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 1,15,21 * * *"
+            },
+            {
+              "field": "cronExpression",
+              "expression": "31,41,51 8 * * 2,5"
+            },
+            {
+              "field": "cronExpression",
+              "expression": "*/10 9 * * 2,5"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        -368,
+        224
+      ],
+      "id": "%%%%%%",
+      "name": "Schedule Trigger"
+    },
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -368,
+        -224
+      ],
+      "id": "%%%%%%",
+      "name": "被表單呼叫"
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "documentId": {
+          "__rl": true,
+          "value": "1Cx-_%%%%%%",
+          "mode": "list",
+          "cachedResultName": "Uniqlo價格追蹤",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1Cx-%%%%%%"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "追蹤清單",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1Cx-%%%%%%"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        -192,
+        0
+      ],
+      "id": "%%%%%%",
+      "name": "讀清單",
+      "executeOnce": true,
+      "retryOnFail": true,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "googleApi": {
+          "id": "%%%%%%",
+          "name": "Service Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const k = r => [r['內碼'], r['色號'], r['尺寸']].map(v => String(v ?? '').trim()).join('|');\nlet keys = null;\ntry {\n  const ex = $('被表單呼叫');\n  if (ex.isExecuted) keys = new Set(ex.all().map(i => k(i.json)));\n} catch (e) { keys = null; }\nif (!keys) return $input.all();                        // 排程或手動：全部放行\nreturn $input.all().filter(i => keys.has(k(i.json)));  // 表單呼叫：只留新列"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -16,
+        0
+      ],
+      "id": "%%%%%%",
+      "name": "篩選新列"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "When clicking ‘Execute workflow’": {
+      "main": [
+        [
+          {
+            "node": "讀清單",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "分組": {
+      "main": [
+        [
+          {
+            "node": "抓商品",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "抽欄位": {
+      "main": [
+        [
+          {
+            "node": "判斷",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "抓商品": {
+      "main": [
+        [
+          {
+            "node": "展開門市",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "展開門市": {
+      "main": [
+        [
+          {
+            "node": "抓門市",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "抓門市": {
+      "main": [
+        [
+          {
+            "node": "抽欄位",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "判斷": {
+      "main": [
+        [
+          {
+            "node": "需更新？",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "需記錄？",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "需通知？",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "需更新？": {
+      "main": [
+        [
+          {
+            "node": "更新清單",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "需記錄？": {
+      "main": [
+        [
+          {
+            "node": "寫歷史",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "需通知？": {
+      "main": [
+        [
+          {
+            "node": "Discord",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "讀清單",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "被表單呼叫": {
+      "main": [
+        [
+          {
+            "node": "讀清單",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "讀清單": {
+      "main": [
+        [
+          {
+            "node": "篩選新列",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "篩選新列": {
+      "main": [
+        [
+          {
+            "node": "分組",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "timeSavedMode": "fixed",
+    "errorWorkflow": "s3XjqX1pBBDB6q3K",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": true
+  },
+  "versionId": "%%%%%%",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "%%%%%%"
+  },
+  "nodeGroups": [],
+  "id": "%%%%%%",
+  "tags": []
+}
