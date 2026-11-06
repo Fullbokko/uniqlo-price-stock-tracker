@@ -94,10 +94,19 @@ flowchart TD
 
 ## 專案展示
 
-- 系統架構圖
-- n8n 工作流程截圖
-- Discord 通知畫面
-- iOS 捷徑操作畫面
+### 系統操作畫面
+
+#### 追蹤清單管理流程
+![Tracking Management Workflow](docs/images/B-tracking-management-workflow.png)
+
+#### 價格與庫存監測流程
+![Price and Stock Monitoring Workflow](docs/images/A-price-stock-monitoring-workflow.png)
+
+#### Discord 自動通知
+![Discord Notification](docs/images/discord-notification.png)
+
+#### iOS 捷徑操作
+![iOS Shortcuts](docs/images/ios-shortcuts.png)
 
 ### n8n 工作流程範例
 
