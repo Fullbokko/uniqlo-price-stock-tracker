@@ -116,6 +116,10 @@ flowchart TD
   - 負責新增、停止及重新啟用商品追蹤。
 - [價格與庫存監測流程](examples/A-price-stock-monitoring-workflow.json)
   - 負責定期取得商品資訊、比對異動及發送通知。
+ 
+> Note: These workflow files are provided for reference.
+> Credentials, webhook configurations, and workflow dependencies
+> must be configured separately before execution.
 
 ## 專案範圍與說明
 
