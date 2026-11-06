@@ -103,10 +103,10 @@ flowchart TD
 ![Price and Stock Monitoring Workflow](docs/images/A-price-stock-monitoring-workflow.png)
 
 #### Discord 自動通知
-![Discord Notification](docs/images/discord-notification.png)
+<img src="docs/images/discord-notification.png" width="700" alt="Discord Notification">
 
 #### iOS 捷徑操作
-![iOS Shortcuts](docs/images/ios-shortcuts.png)
+<img src="docs/images/ios-shortcuts.png" width="300" alt="iOS Shortcuts">
 
 ### n8n 工作流程範例
 
